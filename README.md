@@ -37,7 +37,8 @@ This repo has:
 10. [Troubleshooting](#troubleshooting)
 11. [Technical details](#technical-details)
 12. [Repository layout](#repository-layout)
-13. [Credits](#credits)
+13. [License](#license)
+14. [Credits](#credits)
 
 ---
 
@@ -468,6 +469,18 @@ prebuilt/jingpad-magisk-boot-C1-1.0.0002.014.zip
                                   Magisk v31.0 boot (signed) + stock boot, firmware 1.0.0002.014
 prebuilt/SHA256SUMS               checksum of the zip
 ```
+
+---
+
+## License
+The scripts, tools and documentation in this repository are released under the
+[MIT License](LICENSE). That does **not** cover these third-party parts:
+* `tools/avbtool.py`: AOSP, under its own MIT license ([`tools/avbtool.LICENSE`](tools/avbtool.LICENSE))
+* `tools/keys/testkey_rsa4096.pem`: AOSP's public test key
+* `images/vbmeta-sign-stock.img` and the stock boot inside `prebuilt/`: Jingling's
+  firmware, included only so you can restore your tablet
+* the Magisk code inside the prebuilt rooted boot: Magisk is GPLv3
+  ([source](https://github.com/topjohnwu/Magisk))
 
 ---
 
