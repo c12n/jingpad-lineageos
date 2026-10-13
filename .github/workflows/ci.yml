@@ -13,6 +13,7 @@ jobs:
   lint:
     name: Lint scripts and README
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -41,6 +42,7 @@ jobs:
   images:
     name: Verify vbmeta and prebuilt boot images
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Rebuild vbmetas, compare, check keys and prebuilt boots
@@ -59,6 +61,7 @@ jobs:
             os: macos-latest
             bash: /bin/bash
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20   # normally ~1 min; fail fast if a runner hangs
     steps:
       - uses: actions/checkout@v7
       - name: Run tests/run_tests.sh against simulated fastboot/adb
