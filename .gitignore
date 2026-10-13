@@ -1,0 +1,10 @@
+# firmware, build outputs and personal boot images stay out of git
+*.pac
+*.tar.xz
+*.img.xz
+lineage-*.img
+magisk_patched*.img
+boot-magisk-signed.img
+boot.img
+out/
+__pycache__/
