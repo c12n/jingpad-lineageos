@@ -19,7 +19,7 @@ This repo has:
 * a **vbmeta image made for the JingPad's Unisoc bootloader**, which rejects the usual blank vbmeta
 * **flash scripts** for Linux, macOS and Windows that do every fastboot step for you, with safety checks
 * **Magisk tools**: a signer that makes a patched boot acceptable to the bootloader, plus a
-  prebuilt rooted boot for firmware 1.0.0002.014 ([Releases](../../releases))
+  prebuilt rooted boot for firmware 1.0.0002.014 (in [`prebuilt/`](prebuilt/))
 * small tools to unpack JingPad firmware yourself
 
 ---
@@ -276,13 +276,13 @@ Use this **only** if the command above prints exactly:
 ```
 JingPad/ud710_3h10u_native/ud710_3h10u:10/QP1A.190711.020/14011:userdebug/test-keys
 ```
-1. Download `jingpad-magisk-boot-C1-1.0.0002.014.zip` from this repo's
-   [Releases](../../releases) and unzip it into the repo folder. Keep the
+1. Unzip [`prebuilt/jingpad-magisk-boot-C1-1.0.0002.014.zip`](prebuilt/jingpad-magisk-boot-C1-1.0.0002.014.zip)
+   into the repo folder (it's included when you clone or download the repo). Keep the
    `.fingerprint` files next to the images.
 2. Flash it:
    ```bash
-   ./flash/flash_magisk.sh boot-magisk-v31.0-C1-1.0.0002.014-signed.img       # Linux/macOS
-   flash\flash_magisk.bat boot-magisk-v31.0-C1-1.0.0002.014-signed.img        # Windows
+   ./flash/flash_magisk.sh jingpad-magisk-boot-C1-1.0.0002.014/boot-magisk-v31.0-C1-1.0.0002.014-signed.img   # Linux/macOS
+   flash\flash_magisk.bat jingpad-magisk-boot-C1-1.0.0002.014\boot-magisk-v31.0-C1-1.0.0002.014-signed.img  # Windows
    ```
    * **Linux/macOS:** if the tablet is booted with USB debugging on, the script checks the
      fingerprint over adb (it refuses on a mismatch) and reboots to the bootloader by itself.
@@ -338,7 +338,7 @@ the JingPad may refuse. Instead repeat Option 2 steps 3–6 with your
 
 ### Un-root
 ```bash
-./flash/flash_magisk.sh --unroot boot-stock-C1-1.0.0002.014.img   # or your own stock boot.img
+./flash/flash_magisk.sh --unroot jingpad-magisk-boot-C1-1.0.0002.014/boot-stock-C1-1.0.0002.014.img   # or your own stock boot.img
 ```
 This puts the stock boot back, together with the verification-disabled vbmeta, so LineageOS keeps booting.
 
@@ -464,8 +464,10 @@ tools/pac_extract.py              list / extract Unisoc .pac firmware
 tools/lpdump.py                   list / extract partitions inside super.img
 tools/avbtool.py                  AOSP avbtool (MIT, see tools/avbtool.LICENSE)
 tools/keys/testkey_rsa4096.pem    public AOSP test signing key
+prebuilt/jingpad-magisk-boot-C1-1.0.0002.014.zip
+                                  Magisk v31.0 boot (signed) + stock boot, firmware 1.0.0002.014
+prebuilt/SHA256SUMS               checksum of the zip
 ```
-Prebuilt Magisk and stock boot images for 1.0.0002.014 are in [Releases](../../releases), not in git.
 
 ---
 

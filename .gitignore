@@ -8,3 +8,4 @@ boot-magisk-signed.img
 boot.img
 out/
 __pycache__/
+jingpad-magisk-boot-*/
