@@ -1,0 +1,63 @@
+# Checks on every push and pull request. Runs on free GitHub-hosted runners.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint scripts and README
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: shellcheck
+        run: shellcheck -S warning build/*.sh flash/*.sh tools/*.sh tests/*.sh tests/fake-bin/*
+
+      - name: Shell syntax
+        run: for f in build/*.sh flash/*.sh tools/*.sh tests/*.sh; do bash -n "$f"; done
+
+      - name: Python syntax
+        run: python3 -m py_compile tools/*.py tests/*.py
+
+      - name: Windows scripts keep CRLF line endings
+        run: |
+          for f in flash/*.bat; do
+            if grep -q $'[^\r]$' "$f"; then echo "::error file=$f::has LF-only lines"; exit 1; fi
+          done
+
+      - name: README (disclaimer first line, links, file references)
+        run: python3 tests/check_readme.py
+
+  images:
+    name: Verify vbmeta and prebuilt boot images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rebuild vbmetas, compare, check keys and prebuilt boots
+        run: python3 tests/check_images.py
+
+  flash-scripts:
+    name: Flash script dry-runs (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            bash: bash
+          - name: macOS, system bash 3.2
+            os: macos-latest
+            bash: /bin/bash
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run tests/run_tests.sh against simulated fastboot/adb
+        env:
+          TEST_BASH: ${{ matrix.bash }}
+        run: bash tests/run_tests.sh

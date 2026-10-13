@@ -136,8 +136,17 @@ if (( size_mb > 3990 )); then
     echo "         It may not fit in super next to vendor+product. Build without --gapps."
 fi
 log "Compressing for transfer"
-xz -T0 -k -6 "$img"
-sha256sum "$img" "$img.xz" | tee "$img.sha256"
+xz -T0 -k -6 -f "$img"
+(cd "$(dirname "$img")" && sha256sum "$(basename "$img")" "$(basename "$img").xz") | tee "$img.sha256"
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then   # consumed by .github/workflows/build-lineage.yml
+    {
+        echo "image=$img"
+        echo "image_xz=$img.xz"
+        echo "sha256=$img.sha256"
+        echo "name=$(basename "$img" .img)"
+        echo "size_mb=$size_mb"
+    } >> "$GITHUB_OUTPUT"
+fi
 echo
 echo "Done. Copy $img (or the .xz) to the PC you will flash from and run"
 echo "flash/flash_jingpad.sh with it."

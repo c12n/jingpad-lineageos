@@ -34,7 +34,7 @@ def load_avbtool(path):
 
 
 def read_footer(avb, path):
-    """Return (rollback_index, [(key, value)], partition_size) or None."""
+    """Return (rollback_index, [(key, value)], partition_size, salt_hex) or None."""
     try:
         footer, header, descriptors, size = avb.Avb()._parse_image(
             avb.ImageHandler(path, read_only=True))
@@ -44,7 +44,9 @@ def read_footer(avb, path):
         return None
     props = [(d.key, d.value.decode() if isinstance(d.value, bytes) else d.value)
              for d in descriptors if isinstance(d, avb.AvbPropertyDescriptor)]
-    return header.rollback_index, props, size
+    salt = next((d.salt.hex() for d in descriptors
+                 if isinstance(d, avb.AvbHashDescriptor) and d.partition_name == "boot"), None)
+    return header.rollback_index, props, size, salt
 
 
 def strip_padding(path):
@@ -65,6 +67,8 @@ def main():
     ap.add_argument("--key", default=os.path.join(HERE, "keys", "testkey_rsa4096.pem"))
     ap.add_argument("--avbtool", default=os.path.join(HERE, "avbtool.py"))
     ap.add_argument("--partition-size", type=int, default=BOOT_PARTITION_SIZE)
+    ap.add_argument("--salt", help="hex salt for the hash descriptor (default: reuse the "
+                                   "existing footer's salt, so output is reproducible)")
     args = ap.parse_args()
 
     with open(args.input, "rb") as f:
@@ -75,10 +79,10 @@ def main():
     info = read_footer(avb, args.input)
     shutil.copyfile(args.input, args.output)
     if info:
-        rollback, props, part_size = info
+        rollback, props, part_size, salt = info
         print(f"existing footer: rollback={rollback} props={props} partition={part_size}")
     else:
-        rollback, props, part_size = 0, [("com.android.build.boot.os_version", "10")], 0
+        rollback, props, part_size, salt = 0, [("com.android.build.boot.os_version", "10")], 0, None
         size = strip_padding(args.output)
         print(f"no AVB footer found; image trimmed to {size} bytes, using stock props")
     if part_size and part_size != args.partition_size:
@@ -94,6 +98,9 @@ def main():
            "--rollback_index", str(rollback)]
     for k, v in props:
         cmd += ["--prop", f"{k}:{v}"]
+    salt = args.salt or salt
+    if salt:
+        cmd += ["--salt", salt]
     subprocess.run(cmd, check=True)
 
     ok, log = verify_boot(args.avbtool, args.output)

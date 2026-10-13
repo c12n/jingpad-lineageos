@@ -1,0 +1,177 @@
+# Builds signed Magisk boot images for the JingPad from the stock firmware, using
+# tools/make_magisk_boot.sh, and publishes them as a GitHub release.
+#   - Run it by hand: Actions -> "Make Magisk boot" -> Run workflow
+#   - It also checks every Monday for a new Magisk release and builds it once.
+# Runs on free GitHub-hosted runners (~5 minutes per firmware).
+name: Make Magisk boot
+
+on:
+  workflow_dispatch:
+    inputs:
+      magisk:
+        description: "Magisk version, e.g. 31.0, or 'latest'"
+        default: latest
+        required: true
+      firmware:
+        description: "Stock firmware to patch"
+        type: choice
+        options: [both, "014", "011"]
+        default: both
+      publish:
+        description: "Publish a GitHub release (otherwise only workflow artifacts)"
+        type: boolean
+        default: true
+  schedule:
+    - cron: "23 7 * * 1"   # Mondays 07:23 UTC: build when a new Magisk is out
+
+permissions:
+  contents: read
+
+concurrency:
+  group: magisk-boot
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Pick Magisk version
+    runs-on: ubuntu-latest
+    outputs:
+      magisk: ${{ steps.pick.outputs.magisk }}
+      firmwares: ${{ steps.pick.outputs.firmwares }}
+      build: ${{ steps.pick.outputs.build }}
+      publish: ${{ steps.pick.outputs.publish }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN_MAGISK: ${{ inputs.magisk || 'latest' }}
+          IN_FIRMWARE: ${{ inputs.firmware || 'both' }}
+          IN_PUBLISH: ${{ inputs.publish }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          magisk="${IN_MAGISK#v}"
+          if [[ "$magisk" == latest ]]; then
+            magisk="$(gh api repos/topjohnwu/Magisk/releases/latest -q .tag_name)"
+            magisk="${magisk#v}"
+          fi
+          [[ "$magisk" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "::error::bad Magisk version '$magisk'"; exit 1; }
+          case "$IN_FIRMWARE" in
+            both) firmwares='["014","011"]' ;;
+            014|011) firmwares="[\"$IN_FIRMWARE\"]" ;;
+            *) echo "::error::bad firmware '$IN_FIRMWARE'"; exit 1 ;;
+          esac
+          build=true; publish=true
+          if [[ "$EVENT" == workflow_dispatch && "$IN_PUBLISH" != true ]]; then publish=false; fi
+          if [[ "$EVENT" == schedule ]] && gh release view "magisk-v$magisk" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release magisk-v$magisk already exists - nothing to do."
+            build=false
+          fi
+          echo "Magisk $magisk, firmware $firmwares, build=$build, publish=$publish"
+          {
+            echo "magisk=$magisk"
+            echo "firmwares=$firmwares"
+            echo "build=$build"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Firmware ${{ matrix.firmware }}
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        firmware: ${{ fromJSON(needs.plan.outputs.firmwares) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install e2fsprogs
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq e2fsprogs
+
+      - name: Build signed Magisk boot
+        id: make
+        env:
+          MAGISK: ${{ needs.plan.outputs.magisk }}
+          FIRMWARE: ${{ matrix.firmware }}
+        run: |
+          df -h "$RUNNER_TEMP" | tail -1
+          bash tools/make_magisk_boot.sh --firmware "$FIRMWARE" --magisk "$MAGISK" --out "$RUNNER_TEMP/out"
+
+      - name: Compare with the prebuilt committed in this repo
+        env:
+          NAME: ${{ steps.make.outputs.name }}
+          SUMS: ${{ steps.make.outputs.sums }}
+        run: |
+          committed="prebuilt/$NAME.zip"
+          if [[ ! -f "$committed" ]]; then echo "No committed prebuilt for $NAME."; exit 0; fi
+          want="$(python3 -c 'import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(z.read(sys.argv[2]+"/SHA256SUMS").decode())' "$committed" "$NAME")"
+          echo "committed:"; echo "$want"
+          echo "fresh build:"; grep '\.img$' "$SUMS"
+          if diff <(echo "$want" | sort) <(grep '\.img$' "$SUMS" | sort) >/dev/null; then
+            echo "::notice::$NAME: fresh build is byte-identical to the committed prebuilt"
+          else
+            echo "::notice::$NAME: differs from the committed prebuilt (different Magisk version?)"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.make.outputs.name }}-magisk-v${{ steps.make.outputs.magisk }}
+          path: |
+            ${{ steps.make.outputs.zip }}
+            ${{ steps.make.outputs.sums }}
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish release
+    needs: [plan, build]
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update release magisk-v${{ needs.plan.outputs.magisk }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAGISK: ${{ needs.plan.outputs.magisk }}
+        run: |
+          set -euo pipefail
+          tag="magisk-v$MAGISK"
+          ls -la dist
+          {
+            echo "**This project was made with Claude Ai**"
+            echo
+            echo "> **Disclaimer:** not yet tested on a real tablet. Use at your own risk; keep the stock \`.pac\` and the JingPad Flash Tool ready. Instructions: [README → Step 6](https://github.com/$GITHUB_REPOSITORY#step-6--root-with-magisk)."
+            echo
+            echo "Signed Magisk **v$MAGISK** boot images for the JingPad, built automatically by \`tools/make_magisk_boot.sh\` from the stock firmware ([workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID))."
+            echo
+            echo "Pick the zip whose fingerprint matches \`adb shell getprop ro.bootimage.build.fingerprint\`:"
+            echo
+            for z in dist/*.zip; do
+              n="$(basename "$z" .zip)"
+              fp="$(python3 -c 'import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(next(z.read(f).decode().strip() for f in z.namelist() if f.endswith(".fingerprint")))' "$z")"
+              echo "* \`$n.zip\` → \`$fp\`"
+            done
+            echo
+            echo "Install the matching app: [Magisk v$MAGISK](https://github.com/topjohnwu/Magisk/releases/tag/v$MAGISK)."
+            echo
+            echo "SHA-256:"
+            echo '```'
+            cat dist/*.SHA256SUMS
+            echo '```'
+          } > notes.md
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.zip dist/*.SHA256SUMS --clobber -R "$GITHUB_REPOSITORY"
+            gh release edit "$tag" --notes-file notes.md -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" dist/*.zip dist/*.SHA256SUMS -R "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "Magisk v$MAGISK boot images for the JingPad" --notes-file notes.md
+          fi

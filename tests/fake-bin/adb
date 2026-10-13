@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Simulated adb for tests. ADB_ON=1 means a booted tablet is connected;
+# ADB_FP is what ro.bootimage.build.fingerprint returns.
+echo "adb $*" >> "$FB_LOG"
+case "$1" in
+  get-state) if [[ -n "${ADB_ON:-}" ]]; then echo device; else echo "error: no devices" >&2; exit 1; fi ;;
+  shell)     echo "${ADB_FP:-}" ;;
+  reboot)    echo bootloader > "$FB_STATE" ;;
+  *)         echo "unexpected adb $*" >&2; exit 1 ;;
+esac

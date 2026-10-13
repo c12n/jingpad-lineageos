@@ -18,8 +18,10 @@ This repo has:
 * a script that **compiles** LineageOS 20 (or 21) for the JingPad
 * a **vbmeta image made for the JingPad's Unisoc bootloader**, which rejects the usual blank vbmeta
 * **flash scripts** for Linux, macOS and Windows that do every fastboot step for you, with safety checks
-* **Magisk tools**: a signer that makes a patched boot acceptable to the bootloader, plus a
-  prebuilt rooted boot for firmware 1.0.0002.014 (in [`prebuilt/`](prebuilt/))
+* **Magisk tools**: a signer that makes a patched boot acceptable to the bootloader, plus
+  prebuilt rooted boots for stock firmware 1.0.0002.014 and .011 (in [`prebuilt/`](prebuilt/))
+* **GitHub Actions** that test everything on every push, rebuild the Magisk boots when a new
+  Magisk comes out, and compile LineageOS on your own build machine
 * small tools to unpack JingPad firmware yourself
 
 ---
@@ -34,11 +36,12 @@ This repo has:
 7. [Step 5 – Flash LineageOS](#step-5--flash-lineageos)
 8. [Step 6 – Root with Magisk](#step-6--root-with-magisk)
 9. [Undo / restore stock](#undo--restore-stock)
-10. [Troubleshooting](#troubleshooting)
-11. [Technical details](#technical-details)
-12. [Repository layout](#repository-layout)
-13. [License](#license)
-14. [Credits](#credits)
+10. [Automation with GitHub Actions](#automation-with-github-actions)
+11. [Troubleshooting](#troubleshooting)
+12. [Technical details](#technical-details)
+13. [Repository layout](#repository-layout)
+14. [License](#license)
+15. [Credits](#credits)
 
 ---
 
@@ -197,6 +200,10 @@ What the script does:
 
 Copy the `.img.xz` to the PC you flash from.
 
+Prefer clicking a button? The **Build LineageOS GSI** workflow runs this same script on your
+build machine and publishes the image as a GitHub release. See
+[Automation](#build-lineageos-gsi-set-up-a-self-hosted-runner-one-time).
+
 ### B) Download a prebuilt image (no compiling)
 
 AndyCGYan publishes the same TrebleDroid-based LineageOS builds:
@@ -272,15 +279,22 @@ First find your boot build:
 adb shell getprop ro.bootimage.build.fingerprint
 ```
 
-### Option 1 – Fast path (firmware 1.0.0002.014 only)
-Use this **only** if the command above prints exactly:
-```
-JingPad/ud710_3h10u_native/ud710_3h10u:10/QP1A.190711.020/14011:userdebug/test-keys
-```
-1. Unzip [`prebuilt/jingpad-magisk-boot-C1-1.0.0002.014.zip`](prebuilt/jingpad-magisk-boot-C1-1.0.0002.014.zip)
-   into the repo folder (it's included when you clone or download the repo). Keep the
-   `.fingerprint` files next to the images.
-2. Flash it:
+### Option 1 – Fast path: prebuilt boot (stock firmware 1.0.0002.014 or .011)
+Match the fingerprint from the command above to a prebuilt zip:
+
+| Your fingerprint ends in | Firmware | Zip in [`prebuilt/`](prebuilt/) |
+|---|---|---|
+| `…/14011:userdebug/test-keys` | 1.0.0002.014 userdebug | `jingpad-magisk-boot-C1-1.0.0002.014.zip` |
+| `…/44110:user/release-keys` | 1.0.0002.011 user | `jingpad-magisk-boot-C1-1.0.0002.011.zip` |
+
+Full fingerprints start with `JingPad/ud710_3h10u_native/ud710_3h10u:10/QP1A.190711.020/`.
+**Anything else: use Option 2.** These zips contain Magisk v31.0. Builds for newer Magisk
+versions are published automatically on the [Releases](../../releases) page
+(see [Automation](#automation-with-github-actions)).
+
+1. Unzip the matching zip into the repo folder (the zips are included when you clone or
+   download the repo). Keep the `.fingerprint` files next to the images.
+2. Flash it. Example for 014; for 011 replace `014` with `011` in both names:
    ```bash
    ./flash/flash_magisk.sh jingpad-magisk-boot-C1-1.0.0002.014/boot-magisk-v31.0-C1-1.0.0002.014-signed.img   # Linux/macOS
    flash\flash_magisk.bat jingpad-magisk-boot-C1-1.0.0002.014\boot-magisk-v31.0-C1-1.0.0002.014-signed.img  # Windows
@@ -291,12 +305,16 @@ JingPad/ud710_3h10u_native/ud710_3h10u:10/QP1A.190711.020/14011:userdebug/test-k
      fingerprint and asks you to type `YES` if yours matches.
 
    Rooting does **not** erase your data.
-3. Install the **Magisk v31.0** app from https://github.com/topjohnwu/Magisk/releases/tag/v31.0
+3. Install the **Magisk** app in the same version as the zip (v31.0 for the zips in
+   `prebuilt/`) from https://github.com/topjohnwu/Magisk/releases
 4. Open Magisk. If it asks for **additional setup**, accept. It only sets up files and reboots.
 
-> This prebuilt image was patched on a PC, so it has no "pre-init" partition
+> These prebuilt images are patched on a PC, so no "pre-init" partition is
 > recorded. Modules that bring their own SELinux rules may not fully work. Use
 > Option 2 if you need those.
+
+**Linux shortcut:** `tools/make_magisk_boot.sh --pac YOUR_FIRMWARE.pac --magisk 31.0`
+does the whole PC-side process for any JingPad `.pac` (extract, patch, re-sign, verify, zip).
 
 ### Option 2 – Patch your own boot (any firmware)
 1. Install the Magisk app from https://github.com/topjohnwu/Magisk/releases on the tablet.
@@ -355,6 +373,94 @@ This puts the stock boot back, together with the verification-disabled vbmeta, s
 | Back to JingOS (Linux) | Flash the A1 JingOS `.pac` with the JingPad Flash Tool |
 
 Manual vbmeta restore: `fastboot flash vbmeta images/vbmeta-sign-stock.img`.
+
+---
+
+## Automation with GitHub Actions
+
+Three workflows live in [`.github/workflows/`](.github/workflows/):
+
+| Workflow | What it does | Runs on | When |
+|---|---|---|---|
+| **CI** (`ci.yml`) | shellcheck and syntax checks, README checks, rebuilds both vbmeta images and compares them byte for byte, checks every signing-key relationship and every prebuilt boot, and dry-runs 15 flash scenarios on Linux and on macOS's bash 3.2 | free GitHub runners | every push and pull request |
+| **Make Magisk boot** (`magisk-boot.yml`) | downloads the stock firmware (014 and/or 011) and a Magisk release, runs [`tools/make_magisk_boot.sh`](tools/make_magisk_boot.sh) (extract → patch → re-sign → verify → zip), and publishes a release `magisk-vX.Y` | free GitHub runners (~5 min per firmware) | by hand, and **every Monday** if a new Magisk version is out |
+| **Build LineageOS GSI** (`build-lineage.yml`) | runs [`build/build_lineage_gsi.sh`](build/build_lineage_gsi.sh), uploads the `.img.xz`, and publishes a release | **your own self-hosted runner** | by hand |
+
+Flashing is **not** automated: it needs the tablet plugged into your computer and
+your confirmation at each step. Use the flash scripts for that.
+
+### Running a workflow by hand
+On github.com (a phone browser works too): **Actions** tab → pick the workflow on
+the left → **Run workflow** → fill in the options → **Run workflow**. When it
+finishes, the files are on the [Releases](../../releases) page and under the
+run's **Artifacts**.
+
+### Make Magisk boot
+| Option | Meaning |
+|---|---|
+| `magisk` | Magisk version (`31.0`, …) or `latest` |
+| `firmware` | `both`, `014` (userdebug) or `011` (user) |
+| `publish` | create the GitHub release (otherwise artifacts only, kept 30 days) |
+
+The release has one zip per firmware plus `SHA256SUMS`. The notes list which
+fingerprint each zip is for. Use them exactly like Option 1 in
+[Step 6](#step-6--root-with-magisk), and install the same Magisk version.
+Builds are reproducible: the workflow reports whether a fresh build is
+byte-identical to the zip committed in `prebuilt/`.
+
+### Build LineageOS GSI: set up a self-hosted runner (one time)
+Free GitHub runners have 14 GB of disk and a 6-hour limit, and a LineageOS build
+needs ~300 GB and several hours. So the build runs on **your own machine**, which
+GitHub drives as a *self-hosted runner*.
+
+You need an x86_64 **Ubuntu 22.04** machine or cloud VM with **~300 GB free disk** and
+**16 GB+ RAM** (32 GB+ recommended). See the table in [Step 4](#a-compile-it-yourself).
+
+1. On GitHub: repo **Settings → Actions → Runners → New self-hosted runner**, choose
+   **Linux** / **x64**, and run the commands it shows on your build machine
+   (download, then `./config.sh --url … --token …`). Keep the default label **`self-hosted`**.
+2. Make it start automatically, from the runner folder:
+   ```bash
+   sudo ./svc.sh install
+   sudo ./svc.sh start
+   ```
+3. Let the runner install build packages without a password prompt (only `apt-get`):
+   ```bash
+   echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/apt-get" | sudo tee /etc/sudoers.d/lineage-runner
+   ```
+   (Or install the packages yourself once, using the `apt-get install` line in
+   `build/build_lineage_gsi.sh`, and untick **install_deps** when running the workflow.)
+4. **Actions → Build LineageOS GSI → Run workflow**. Pick version `20`, leave runner
+   as `self-hosted`.
+5. The first run downloads ~100 GB of source, so expect several hours. The source stays
+   on the machine (`~/lineage-20-gsi`), so later runs are faster; untick **sync** for a
+   quick rebuild without updating.
+6. Result: a release such as `lineage-20.0-YYYYMMDD-UNOFFICIAL-arm64_bvN` with the
+   `.img.xz` and `.sha256`. Flash it with [Step 5](#step-5--flash-lineageos).
+
+| Option | Meaning |
+|---|---|
+| `version` | `20` (recommended) or `21` (experimental) |
+| `gapps` | include Google apps (`arm64_bgN`). May be too big for the JingPad |
+| `runner` | runner label: `self-hosted`, or a paid large GitHub runner with enough disk |
+| `source_dir` | where the source tree lives on the runner (default `~/lineage-<version>-gsi`) |
+| `sync` | sync the source and re-apply patches (untick to just rebuild) |
+| `install_deps` | install build packages with `apt-get` |
+| `publish` | create a GitHub release (otherwise artifact only, kept 7 days) |
+
+> **Security:** a self-hosted runner executes workflow code on your machine. Here it
+> is only used by `build-lineage.yml`, which starts **only by hand**. Only people
+> with write access to the repo can run it. CI uses GitHub's own runners. Keep it
+> that way: never point a `pull_request` workflow at `self-hosted`, and leave
+> **Settings → Actions → General → Approval for running fork pull request workflows**
+> on its default (approval required).
+
+### Running the checks locally
+```bash
+bash tests/run_tests.sh          # flash-script dry runs (simulated fastboot/adb)
+python3 tests/check_images.py    # vbmeta + prebuilt boot verification
+python3 tests/check_readme.py    # disclaimer line, links, file references
+```
 
 ---
 
@@ -436,9 +542,17 @@ how `vbmeta-sign-root.img` is made.
 * Magisk v31.0's own `boot_patch.sh` patched the stock boot with the flags the app
   uses on this tablet (`KEEPVERITY=true`, `KEEPFORCEENCRYPT=true`). The stock
   recovery contains `fastbootd`.
-* The flash scripts were dry-run against simulated `fastboot`/`adb` (right mode
-  for each step, oversized images refused, unsigned or mismatched boot images refused,
-  restore paths, macOS without `timeout`), and pass `shellcheck`.
+* The Magisk boots are **reproducible**: two independent runs of
+  `tools/make_magisk_boot.sh` produce byte-identical images (the re-signer reuses the
+  stock footer's salt), and the patched kernel, dtb and ramdisk match a separate manual patch.
+* Firmware 1.0.0002.011 (user build) uses the **same** chain keys as 014, so the
+  same vbmeta images serve both. Its `super` is a sparse image, which `lpdump.py` reads
+  in place; the extracted `vendor` passes `e2fsck`.
+* The flash scripts are dry-run against simulated `fastboot`/`adb` in 15 scenarios:
+  right mode for each step, exact call sequence, oversized images refused, locked
+  bootloader, unsigned or mismatched boot images refused, restore paths, and macOS without
+  `timeout`. The suite was checked by injecting bugs, which it catches. It runs in CI on
+  every push, on Linux and macOS, and the scripts pass `shellcheck`.
 
 **Not verified:** real-hardware behaviour of the bootloader, LineageOS hardware
 support (camera, audio, sensors, Bluetooth) on this Unisoc vendor, and the
@@ -465,9 +579,18 @@ tools/pac_extract.py              list / extract Unisoc .pac firmware
 tools/lpdump.py                   list / extract partitions inside super.img
 tools/avbtool.py                  AOSP avbtool (MIT, see tools/avbtool.LICENSE)
 tools/keys/testkey_rsa4096.pem    public AOSP test signing key
+tools/make_magisk_boot.sh         firmware .pac -> signed Magisk boot zip, end to end (Linux)
 prebuilt/jingpad-magisk-boot-C1-1.0.0002.014.zip
                                   Magisk v31.0 boot (signed) + stock boot, firmware 1.0.0002.014
-prebuilt/SHA256SUMS               checksum of the zip
+prebuilt/jingpad-magisk-boot-C1-1.0.0002.011.zip
+                                  Magisk v31.0 boot (signed) + stock boot, firmware 1.0.0002.011
+prebuilt/SHA256SUMS               checksums of the zips
+tests/run_tests.sh                flash-script dry runs against tests/fake-bin/{fastboot,adb}
+tests/check_images.py             vbmeta + prebuilt boot verification
+tests/check_readme.py             README checks
+.github/workflows/ci.yml          runs the tests on every push
+.github/workflows/magisk-boot.yml builds + releases Magisk boots (weekly / by hand)
+.github/workflows/build-lineage.yml  compiles LineageOS on a self-hosted runner
 ```
 
 ---

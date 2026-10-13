@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Simulated fastboot for tests. State machine: bootloader -> fastbootd -> recovery.
+# FB_STATE: file holding the current mode; FB_LOG: every call is appended here.
+st=$(cat "$FB_STATE" 2>/dev/null || echo bootloader)
+echo "fastboot $*" >> "$FB_LOG"
+case "$1 ${2:-}" in
+  "devices "*)            echo "0123456789ABCDEF	fastboot" ;;
+  "getvar is-userspace")  if [[ $st == fastbootd ]]; then echo "is-userspace: yes" >&2; else echo "is-userspace: no" >&2; fi ;;
+  "getvar unlocked")      echo "unlocked: ${FB_UNLOCKED:-yes}" >&2 ;;
+  "reboot fastboot")      echo fastbootd > "$FB_STATE" ;;
+  "reboot recovery")      echo recovery > "$FB_STATE" ;;
+  "reboot bootloader")    echo bootloader > "$FB_STATE" ;;
+  "reboot ")              echo android > "$FB_STATE" ;;
+  "flash vbmeta"|"flash boot")
+      [[ $st == bootloader ]] || { echo "FAILED ($2 must be flashed from the bootloader)" >&2; exit 1; }
+      [[ -f "$3" ]] || { echo "FAILED (no file $3)" >&2; exit 1; }
+      echo "OKAY flash $2" >&2 ;;
+  "flash system")
+      [[ $st == fastbootd ]] || { echo "FAILED (system needs fastbootd)" >&2; exit 1; }
+      echo "OKAY flash system" >&2 ;;
+  *) echo "FAILED (unexpected fastboot $*)" >&2; exit 1 ;;
+esac

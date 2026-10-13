@@ -1,0 +1,136 @@
+# Compiles the LineageOS GSI for the JingPad with build/build_lineage_gsi.sh.
+#
+# A LineageOS build needs ~300 GB of disk, 16-32+ GB of RAM and several hours.
+# Free GitHub-hosted runners have 14 GB of disk and a 6-hour limit, so this runs on
+# a SELF-HOSTED runner: your own Ubuntu 22.04 PC or cloud VM. Setup steps are in
+# the README ("Automation with GitHub Actions"). A paid large GitHub runner with
+# enough disk also works: put its label in the "runner" input.
+name: Build LineageOS GSI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "LineageOS version"
+        type: choice
+        options: ["20", "21"]
+        default: "20"
+      gapps:
+        description: "Include Google apps (MindTheGapps, arm64_bgN). May not fit the JingPad."
+        type: boolean
+        default: false
+      runner:
+        description: "Runner label (self-hosted runner with ~300 GB free, 16+ GB RAM)"
+        default: self-hosted
+        required: true
+      source_dir:
+        description: "Source tree on the runner (kept between runs; empty = ~/lineage-<version>-gsi)"
+        default: ""
+        required: false
+      sync:
+        description: "Sync source and re-apply patches (untick for a quick rebuild)"
+        type: boolean
+        default: true
+      install_deps:
+        description: "Install build packages with apt (needs passwordless sudo on the runner)"
+        type: boolean
+        default: true
+      publish:
+        description: "Publish the image as a GitHub release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-lineage-${{ inputs.runner }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: LineageOS ${{ inputs.version }}${{ inputs.gapps && ' + GApps' || '' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 2880     # 48 h; self-hosted jobs may run up to 5 days
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build
+        id: build
+        env:
+          VERSION: ${{ inputs.version }}
+          GAPPS: ${{ inputs.gapps }}
+          SOURCE_DIR: ${{ inputs.source_dir }}
+          SYNC: ${{ inputs.sync }}
+          INSTALL_DEPS: ${{ inputs.install_deps }}
+        run: |
+          set -euo pipefail
+          args=(--version "$VERSION")
+          [[ "$GAPPS" == true ]] && args+=(--gapps)
+          [[ -n "$SOURCE_DIR" ]] && args+=(--dir "$SOURCE_DIR")
+          [[ "$SYNC" == true ]] || args+=(--nosync)
+          [[ "$INSTALL_DEPS" == true ]] || args+=(--skip-deps)
+          echo "build/build_lineage_gsi.sh ${args[*]}"
+          bash build/build_lineage_gsi.sh "${args[@]}"
+
+      - name: Summary
+        env:
+          NAME: ${{ steps.build.outputs.name }}
+          SIZE: ${{ steps.build.outputs.size_mb }}
+          SHA: ${{ steps.build.outputs.sha256 }}
+        run: |
+          {
+            echo "### $NAME"
+            echo "System image: **$SIZE MiB** (JingPad limit ~3990 MiB)"
+            echo '```'
+            cat "$SHA"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.build.outputs.name }}
+          path: |
+            ${{ steps.build.outputs.image_xz }}
+            ${{ steps.build.outputs.sha256 }}
+          if-no-files-found: error
+          compression-level: 0     # already xz-compressed
+          retention-days: 7
+
+      - name: Write release notes
+        if: inputs.publish
+        env:
+          NAME: ${{ steps.build.outputs.name }}
+          SIZE: ${{ steps.build.outputs.size_mb }}
+          SHA: ${{ steps.build.outputs.sha256 }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          {
+            echo "**This project was made with Claude Ai**"
+            echo
+            echo "> **Disclaimer:** not yet tested on a real tablet. Flashing erases the tablet; keep the stock \`.pac\` and the JingPad Flash Tool ready."
+            echo
+            echo "LineageOS $VERSION GSI for the JingPad A1/C1, built by [this workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            echo "System image: $SIZE MiB unpacked."
+            echo
+            echo "Flash it with \`flash/flash_jingpad.sh $NAME.img.xz\` - see [README → Step 5](https://github.com/$GITHUB_REPOSITORY#step-5--flash-lineageos)."
+            echo
+            echo "SHA-256:"
+            echo '```'
+            cat "$SHA"
+            echo '```'
+          } > "$RUNNER_TEMP/notes.md"
+
+      - name: Publish release
+        if: inputs.publish
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.build.outputs.name }}
+          name: ${{ steps.build.outputs.name }}
+          body_path: ${{ runner.temp }}/notes.md
+          target_commitish: ${{ github.sha }}
+          files: |
+            ${{ steps.build.outputs.image_xz }}
+            ${{ steps.build.outputs.sha256 }}
